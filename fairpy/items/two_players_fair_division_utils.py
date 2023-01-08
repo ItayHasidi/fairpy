@@ -5,7 +5,8 @@ programmers: Itay Hasidi & Amichai Bitan
 """
 from typing import List, Any, Dict
 # from fairpy import fairpy
-from fairpy.agentlist import AgentList, AdditiveAgent
+# from fairpy.agentlist import AgentList, AdditiveAgent
+from fairpy.fairpy.agentlist import AgentList,AdditiveAgent
 
 
 def find_last_item(agent, item_list):

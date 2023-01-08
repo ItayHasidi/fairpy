@@ -5,8 +5,8 @@ By: D. Marc Kilgour, Rudolf Vetschera
 programmers: Itay Hasidi & Amichai Bitan
 """
 import logging
-from fairpy import AgentList, AdditiveAgent
-from fairpy.items.two_players_fair_division_utils import *
+# from fairpy import AgentList, AdditiveAgent
+# from fairpy.items.two_players_fair_division_utils import *
 from typing import Dict, Any, List
 
 # from two_players_fair_division_utils import *
@@ -15,6 +15,154 @@ from typing import Dict, Any, List
 
 
 # logging.basicConfig(level=loggining.DEBUG)
+from fairpy.fairpy.agentlist import AgentList, AdditiveAgent
+from fairpy.fairpy.items.two_players_fair_division_utils import *
+import cppyy
+
+cppyy.cppdef("""
+#include <string>
+#include <vector>
+using namespace std;
+
+class ItemList{
+    std::vector<std::string> items;
+
+public:
+    ItemList(){
+        this->items = {};
+    }
+
+    ItemList(std::vector<std::string> items){
+        this->items = items;
+    }
+
+    void clear_list(){
+        this->items.clear();
+    }
+
+    std::vector<std::string> get_items(){
+        return this->items;
+    }
+
+    void add_item(string item){
+        this->items.push_back(item);
+    }
+
+    void remove_item(int idx){
+        items.erase(items.begin() + idx);
+    }
+};
+
+class ItemLists{
+    ItemList listA, listB;
+
+public:
+    ItemLists(){
+        this->listA = {};
+        this->listB = {};
+    }
+    
+    ItemLists(ItemList listA, ItemList listB){
+        this->listA = listA;
+        this->listB = listB;
+    }
+
+    ItemList get_ListA(){
+        return this->listA;
+    }
+
+    ItemList get_ListB(){
+        return this->listB;
+    }
+};
+
+class Agent{
+    std::string name;
+    std::vector<std::string> items;
+    std::vector<int> valuations;
+
+public:
+    Agent(){
+        this->name = "";
+        this->items = {};
+        this->valuations = {};
+    }
+
+    Agent(std::string name, std::vector<std::string> items, std::vector<int> valuations){
+        this->name = name;
+        this->items = items;
+        this->valuations = valuations;
+    }
+
+    Agent(Agent const & other){
+        this->name = other.name;
+        this->items = other.items;
+        this->valuations = other.valuations;
+    }
+
+    std::string get_name(){
+        return this->name;
+    }
+
+    std::vector<std::string> get_items(){
+        return this->items;
+    }
+
+    std::vector<int> get_valuations(){
+        return this->valuations;
+    }
+
+    void remove_item(int idx){
+        items.erase(items.begin() + idx);
+        valuations.erase(valuations.begin() + idx);
+    }
+};
+
+class AgentList{
+    Agent agentA, agentB;
+
+public:
+    AgentList(Agent agentA, Agent agentB){
+        this->agentA = Agent(agentA);
+        this->agentB = Agent(agentB);
+    }
+
+    Agent get_AgentA(){
+        return this->agentA;
+    }
+
+    Agent get_AgentB(){
+        return this->agentB;
+    }
+};
+
+
+std::string find_last_item(Agent agent, ItemList item_list){
+    int max_score = -1;
+    std::string max_item = "";
+    for(int i = 0; i < sizeof(item_list.get_items()); i++){
+        int score = agent.get_valuations()[i];
+        if(max_score < score){
+            max_score = score;
+            max_item = agent.get_items()[i];
+        }
+    }
+    return max_item;
+}
+
+std::vector<ItemList> deep_copy_2d_list(std::vector<ItemList> lst){
+    std::vector<ItemList> lst_copy;
+    for(int i = 0; i < sizeof(lst); i++){
+        ItemList tempList;
+        for(int j = 0; j < sizeof(lst[i].get_items()); j++){
+            tempList.add_item(lst[i].get_items()[j]);
+        }
+        lst_copy.push_back(tempList);
+        tempList.clear_list();
+    }
+    return lst_copy;
+}
+""")
 
 logger = logging.getLogger(__name__)
 
@@ -65,12 +213,13 @@ def sequential(agents: AgentList, items: List[Any] = None) -> Dict:
     [{'Alice': ['a', 'b', 'd', 'f', 'h'], 'George': ['i', 'j', 'c', 'e', 'g']}, {'Alice': ['a', 'b', 'd', 'g', 'h'], 'George': ['i', 'j', 'c', 'e', 'f']}, {'Alice': ['a', 'b', 'e', 'f', 'h'], 'George': ['i', 'j', 'c', 'd', 'g']}]
 
     """
+    allocations: cppyy.gbl.ItemLists = cppyy.gbl.ItemLists()
+    end_allocation: cppyy.gbl.ItemList = cppyy.gbl.ItemList()
+    return recursive_sequential(agents, items, allocations=allocations, end_allocation=end_allocation)
 
-    return recursive_sequential(agents, items, allocations=[[], []], end_allocation=[])
-
-
-def recursive_sequential(agents: AgentList, items: List[Any], allocations: List[Any] = [[], []],
-                     end_allocation=[], level: int = 1):
+#  = [[], []] , allocations=[[], []], end_allocation=[]
+def recursive_sequential(agents: AgentList, items: List[Any], allocations: cppyy.gbl.ItemLists,
+                     end_allocation: cppyy.gbl.ItemList, level: int = 1):
     """
     A recursive helper function to sequential()
 
@@ -86,13 +235,13 @@ def recursive_sequential(agents: AgentList, items: List[Any], allocations: List[
         end_allocation.append({agents[0].name(): allocations[0], agents[1].name(): allocations[1]})
         return end_allocation
     H_A_level, H_B_level = H_M_l(agents, items, level)
-    logger.info("current allocations: \n%s: %s\n%s: %s", agents[0].name(), allocations[0], agents[1].name(),
-                allocations[0])
+    logger.info("current allocations: \n%s: %s\n%s: %s", agents[0].name(), allocations.get_ListA(), agents[1].name(),
+                allocations.get_ListB())
     if H_A_level and H_B_level and have_different_elements(H_A_level, H_B_level):
         for i in H_A_level:
             for j in H_B_level:
                 if i != j:
-                    _allocations = deep_copy_2d_list(allocations)
+                    _allocations: cppyy.gbl.ItemLists = cppyy.gbl.deep_copy_2d_list(allocations)
                     _items, _allocations = allocate(items.copy(), _allocations, i, j)
                     recursive_sequential(agents, _items, _allocations, end_allocation, level + 1)
     else:
@@ -170,17 +319,17 @@ def recursive_restricted_simple(agents: AgentList, items: List[Any], allocations
                 allocations[0])
     if H_A_level and H_B_level and have_different_elements(H_A_level, H_B_level):
         if H_A_level[0] != H_B_level[0]:
-            _allocations = deep_copy_2d_list(allocations)
+            _allocations = cppyy.gbl.deep_copy_2d_list(allocations)
             _items, _allocations = allocate(items.copy(), _allocations, H_A_level[0], H_B_level[0])
             recursive_restricted_simple(agents, _items, _allocations, end_allocation=end_allocation, level=level + 1)
         else:
             if len(H_A_level) > 1:
-                _allocations = deep_copy_2d_list(allocations)
+                _allocations = cppyy.gbl.deep_copy_2d_list(allocations)
                 _items, _allocations = allocate(items.copy(), _allocations, H_A_level[1], H_B_level[0])
                 recursive_restricted_simple(agents, _items, _allocations, end_allocation=end_allocation,
                                             level=level + 1)
             if len(H_B_level) > 1:
-                _allocations = deep_copy_2d_list(allocations)
+                _allocations = cppyy.gbl.deep_copy_2d_list(allocations)
                 _items, _allocations = allocate(items.copy(), _allocations, H_A_level[0], H_B_level[1])
                 recursive_restricted_simple(agents, _items, _allocations, end_allocation=end_allocation,
                                             level=level + 1)
@@ -255,11 +404,11 @@ def singles_doubles_helper(agents: AgentList, items: List[Any] = None, allocatio
         return
     H_A_level, H_B_level = H_M_l(agents, items, len(agents[0].all_items()))
     if H_A_level[0] != H_B_level[0]:
-        _allocations = deep_copy_2d_list(allocations)
+        _allocations = cppyy.gbl.deep_copy_2d_list(allocations)
         _items, _allocations = allocate(items.copy(), _allocations, H_A_level[0], H_B_level[0])
         singles_doubles_helper(agents, _items, _allocations, end_allocation)
-    temp_allocation_1 = deep_copy_2d_list(allocations)
-    temp_allocation_2 = deep_copy_2d_list(allocations)
+    temp_allocation_1 = cppyy.gbl.deep_copy_2d_list(allocations)
+    temp_allocation_2 = cppyy.gbl.deep_copy_2d_list(allocations)
     items_1, temp_allocation_1 = allocate(items.copy(), temp_allocation_1, H_A_level[0], H_B_level[1])
     items_2, temp_allocation_2 = allocate(items.copy(), temp_allocation_2, H_A_level[1], H_B_level[0])
     singles_doubles_helper(agents, items_1, temp_allocation_1, end_allocation)
@@ -337,11 +486,11 @@ def iterated_singles_doubles_helper(agents: AgentList, items: List[Any] = None, 
         return
     H_A_level, H_B_level = H_M_l(agents, items, len(agents[0].all_items()))
     if H_A_level[0] != H_B_level[0]:
-        _allocations = deep_copy_2d_list(allocations)
+        _allocations = cppyy.gbl.deep_copy_2d_list(allocations)
         _items, _allocations = allocate(items.copy(), _allocations, H_A_level[0], H_B_level[0])
         iterated_singles_doubles_helper(agents, _items, _allocations, end_allocation)
-    temp_allocation_1 = deep_copy_2d_list(allocations)
-    temp_allocation_2 = deep_copy_2d_list(allocations)
+    temp_allocation_1 = cppyy.gbl.deep_copy_2d_list(allocations)
+    temp_allocation_2 = cppyy.gbl.deep_copy_2d_list(allocations)
     items_1, temp_allocation_1 = allocate(items.copy(), temp_allocation_1, H_A_level[0], H_B_level[1])
     items_2, temp_allocation_2 = allocate(items.copy(), temp_allocation_2, H_A_level[1], H_B_level[0])
     iterated_singles_doubles_helper(agents, items_1, temp_allocation_1, end_allocation)
@@ -414,11 +563,11 @@ def s1_helper(agents: AgentList, items: List[Any] = None, allocations=[[], []], 
         return end_allocation
     H_A_level, H_B_level = H_M_l(agents, items, len(agents[0].all_items()))
     if H_A_level[0] != H_B_level[0]:
-        _allocations = deep_copy_2d_list(allocations)
+        _allocations = cppyy.gbl.deep_copy_2d_list(allocations)
         _items, _allocations = allocate(items.copy(), _allocations, H_A_level[0], H_B_level[0])
         s1_helper(agents, _items, _allocations, end_allocation)
-    temp_allocation_1 = deep_copy_2d_list(allocations)
-    temp_allocation_2 = deep_copy_2d_list(allocations)
+    temp_allocation_1 = cppyy.gbl.deep_copy_2d_list(allocations)
+    temp_allocation_2 = cppyy.gbl.deep_copy_2d_list(allocations)
     items_1, temp_allocation_1 = allocate(items.copy(), temp_allocation_1, H_A_level[0], H_B_level[1])
     items_2, temp_allocation_2 = allocate(items.copy(), temp_allocation_2, H_A_level[1], H_B_level[0])
     s1_helper(agents, items_1, temp_allocation_1, end_allocation)
@@ -493,11 +642,11 @@ def l1_helper(agents: AgentList, items: List[Any] = None, allocations=[[], []], 
         return end_allocation
     H_A_level, H_B_level = H_M_l(agents, items, len(agents[0].all_items()))
     if H_A_level[0] != H_B_level[0]:
-        _allocations = deep_copy_2d_list(allocations)
+        _allocations = cppyy.gbl.deep_copy_2d_list(allocations)
         _items, _allocations = allocate(items.copy(), _allocations, H_A_level[0], H_B_level[0])
         s1_helper(agents, _items, _allocations, end_allocation)
-    temp_allocation_1 = deep_copy_2d_list(allocations)
-    temp_allocation_2 = deep_copy_2d_list(allocations)
+    temp_allocation_1 = cppyy.gbl.deep_copy_2d_list(allocations)
+    temp_allocation_2 = cppyy.gbl.deep_copy_2d_list(allocations)
     items_1, temp_allocation_1 = allocate(items.copy(), temp_allocation_1, H_A_level[0], H_B_level[1])
     items_2, temp_allocation_2 = allocate(items.copy(), temp_allocation_2, H_A_level[1], H_B_level[0])
     l1_helper(agents, items_1, temp_allocation_1, end_allocation)
@@ -844,10 +993,10 @@ def trump(agents: AgentList, items: List[Any] = None) -> Dict:
             if not hm[m]:
                 return end_allocation
             if m == 0:
-                item = find_last_item(agents[1], hm[0])
+                item = cppyy.gbl.find_last_item(agents[1], hm[0])
                 allocate(items, allocations, a_item=item)
             if m == 1:
-                item = find_last_item(agents[0], hm[1])
+                item = cppyy.gbl.find_last_item(agents[0], hm[1])
                 allocate(items, allocations, b_item=item)
             logger.info("current allocations: \n%s: %s\n%s: %s", agents[0].name(), allocations[0], agents[1].name(), allocations[0])
         i += 2
